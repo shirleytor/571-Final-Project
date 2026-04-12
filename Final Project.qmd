@@ -113,7 +113,7 @@ wls_clean <- wls_2 %>%
          parent_op_col_simple = factor(parent_op_col_simple))
 ```
 
-Check missingness for `wls_clean`
+Check missingness for `wls_clean`.
 
 ```{r}
 sort(sapply(wls_clean, function(x) sum(is.na(x))), decreasing = TRUE)
@@ -136,4 +136,11 @@ wls_analysis <- wls_analysis %>%
          dad_edu_z = as.numeric(scale(dad_edu)),
          mom_edu_z = as.numeric(scale(mom_edu)),
          log_family_income57_z = as.numeric(scale(log_family_income57)))
+```
+
+Baseline model
+
+```{r}
+lm(log_income74 ~ colgrad + hs_rank + dad_edu + mom_edu + log_family_income57 + sex,
+   data = wls_analysis)
 ```
