@@ -206,10 +206,13 @@ Ywls <- wls %>%
 
 #Model
 fit <- glmnet(x=Xwls, y=Ywls, family = "binomial", alpha = a, lambda = l)
-
+s$
 #probablities of someone being a college grad.
 probs <- predict(fit, Xwls, type = 'response') 
+```
 
+
+```{r}
 final_matrix <- cbind(Xwls, Ywls, probs) %>% 
   as.data.frame() %>%
   rename(probs = s0) %>%

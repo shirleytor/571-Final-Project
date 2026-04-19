@@ -3,9 +3,9 @@
     "path": "~/Stats Work/Masters/571-Final-Project/weighting.qmd",
     "project_path": "weighting.qmd",
     "type": "quarto_markdown",
-    "hash": "0",
+    "hash": "3001059064",
     "contents": "",
-    "dirty": false,
+    "dirty": true,
     "created": 1776362489745.0,
     "source_on_save": false,
     "relative_order": 1,
@@ -15,8 +15,8 @@
         "tempName": "Untitled1",
         "source_window_id": "",
         "Source": "Source",
-        "cursorPosition": "264,48",
-        "scrollLine": "256",
+        "cursorPosition": "212,0",
+        "scrollLine": "191",
         "docOutlineVisible": "1",
         "rmdVisualCollapsedChunks": "",
         "rmdVisualModeLocation": "5132:1705.3333740234375"
@@ -26,7 +26,7 @@
     "encoding": "UTF-8",
     "collab_server": "",
     "source_window": "",
-    "last_content_update": 1776567130720,
+    "last_content_update": 1776569496369,
     "read_only": false,
     "read_only_alternatives": []
 }
