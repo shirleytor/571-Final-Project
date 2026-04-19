@@ -1,0 +1,146 @@
+---
+title: "STATS 571 Final Project"
+author: "Lindsey Lin, Shirley Toribio"
+format: pdf
+editor: visual
+---
+
+### **Data Cleaning**
+
+We first restrict the sample to observations with valid treatment and outcome values. We then recode special missing-value codes to proper `NA`s, rescale income variables into meaningful dollar units, and construct interpretable treatment, outcome, and covariate variables. Next, we convert categorical variables into labeled factors, inspect missingness, and define a complete-case analysis sample based on the core variables used in the main causal models. Finally, we create transformed variables such as log income to reduce skewness and improve model stability.
+
+```{r}
+library(haven)
+library(tidyverse)
+library(forcats)
+```
+
+```{r}
+wls <- read_dta("wls_subset.dta")
+```
+
+```{r}
+wls_1 <- wls %>% 
+  filter(edyr64 > 0) %>%          # keep non-negative years of schooling
+  filter(!is.na(yrer74i1)) %>%    # remove missing earnings
+  filter(yrer74i1 >= 0)           # keep non-negative earnings
+
+wls_2 <- wls_1 %>% 
+  mutate(colgrad = as.integer(edyr64 >= 16), # treatment: college graduate or not
+         eduyears = edyr64) %>%      
+  
+  rename(sex = sexrsp,
+         hs_type = hsdm57,
+         hs_rank = hsrscorq,
+         hs_opinion = hsntrstq,
+         hs_size = hssize,
+         hs_col_prep = colprepq,
+         hs_merit = nameritq,
+         hs_col_exam = cebexamq,
+         parent_op_col = parencq,
+         dad_edu = edfa57q,
+         mom_edu = edmo57q,
+         family_income57 = pi5760,
+         dad_farmer = ocf357)
+
+wls_clean <- wls_2 %>% 
+  # -1 means "don't know", -3 means "refused"
+  mutate(hs_rank = na_if(hs_rank, -3),
+         hs_opinion = na_if(hs_opinion, -3),
+         hs_merit = na_if(hs_merit, -3),
+         hs_col_exam = na_if(hs_col_exam, -3),
+         hs_col_prep = na_if(hs_col_prep, -3),
+         dad_edu = na_if(dad_edu, -3),
+         dad_edu = na_if(dad_edu, -1),
+         mom_edu = na_if(mom_edu, -3),
+         mom_edu = na_if(mom_edu, -1),
+         family_income57 = na_if(family_income57, -3)) %>% 
+  
+  # log_transform earnings
+  mutate(income74 = yrer74i1 * 100,
+         family_income57 = family_income57 * 100,
+         log_income74 = log(income74 + 1),
+         log_family_income57 = log(family_income57 + 1)) %>% 
+  
+  mutate(sex = recode(as.character(sex), 
+                      "1" = "Male", 
+                      "2" = "Female"),
+         hs_type = recode(as.character(hs_type), 
+                          "1" = "Catholic",
+                          "2" = "Private-Other",
+                          "3" = "Public"),
+         hs_opinion = recode(as.character(hs_opinion),
+                             "1" = "Positive",
+                             "2" = "Negative",
+                             "3" = "Indifferent"),
+         hs_merit = recode(as.character(hs_merit),
+                           "1" = "Yes",
+                           "2" = "No"),
+         hs_col_exam = recode(as.character(hs_col_exam),
+                              "1" = "Yes",
+                              "2" = "No"),
+         hs_col_prep = recode(as.character(hs_col_prep),
+                              "1" = "Yes",
+                              "2" = "No"),
+         parent_op_col = recode(as.character(parent_op_col),
+                                "1" = "YesCollege",
+                                "2" = "NoCollege",
+                                "3" = "DontCare",
+                                "4" = "StrongNoCollege",
+                                .default = NA_character_),
+         dad_farmer = recode(as.character(dad_farmer),
+                             "1" = "No",
+                             "2" = "Yes",
+                             "3" = "Yes",
+                             "4" = "Yes",
+                             "5" = "Yes")) %>% 
+  
+  mutate(colgrad = factor(colgrad, levels = c(0, 1), labels = c("No", "Yes")),
+         sex = factor(sex),
+         hs_type = factor(hs_type),
+         hs_opinion = factor(hs_opinion),
+         hs_merit = factor(hs_merit),
+         hs_col_exam = factor(hs_col_exam),
+         hs_col_prep = factor(hs_col_prep),
+         parent_op_col = factor(parent_op_col),
+         dad_farmer = factor(dad_farmer)) %>% 
+  
+  mutate(parent_op_col_simple = case_when(parent_op_col == "YesCollege" ~ "SupportCollege",
+                                   parent_op_col == "NoCollege" ~ "AgainstCollege",
+                                   parent_op_col == "StrongNoCollege" ~ "AgainstCollege",
+                                   parent_op_col == "DontCare" ~ "Neutral",
+                                   TRUE ~ NA_character_),
+         parent_op_col_simple = factor(parent_op_col_simple))
+```
+
+Check missingness for `wls_clean`.
+
+```{r}
+sort(sapply(wls_clean, function(x) sum(is.na(x))), decreasing = TRUE)
+```
+
+Analysis dataset for main causal models, use complete cases on the core variables.
+
+```{r}
+wls_analysis <- wls_clean %>% 
+  select(idpub, colgrad, eduyears, income74, log_income74, sex, 
+         hs_rank, hs_size, hs_type, hs_merit, hs_col_prep, hs_col_exam,
+         dad_edu, mom_edu, dad_farmer, parent_op_col_simple, 
+         family_income57, log_family_income57, ) %>% 
+  drop_na(colgrad, log_income74, log_family_income57, sex, hs_rank, dad_edu, mom_edu)
+
+# standardized versions of continuous covariates
+wls_analysis <- wls_analysis %>% 
+  mutate(hs_rank_z = as.numeric(scale(hs_rank)),
+         hs_size_z = as.numeric(scale(hs_size)),
+         dad_edu_z = as.numeric(scale(dad_edu)),
+         mom_edu_z = as.numeric(scale(mom_edu)),
+         log_family_income57_z = as.numeric(scale(log_family_income57)))
+```
+
+Baseline model
+
+```{r}
+lm(log_income74 ~ colgrad + hs_rank + dad_edu + mom_edu + log_family_income57 + sex,
+   data = wls_analysis)
+```

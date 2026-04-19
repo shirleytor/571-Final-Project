@@ -1,0 +1,296 @@
+---
+title: "Prop_Weight"
+format: html
+editor: visual
+---
+
+
+```{r}
+library(caret)
+library(haven)
+library(tidyverse)
+library(forcats)
+library(MASS)
+library(glmnet)
+library(fastDummies)
+library(ggplot2)
+```
+
+You can add options to executable code like this
+
+```{r}
+wls <- read_dta("wls_subset.dta")
+wls_1 <- wls %>% 
+  filter(edyr64 > 0) %>%          # keep non-negative years of schooling
+  filter(!is.na(yrer74i1)) %>%    # remove missing earnings
+  filter(yrer74i1 >= 0)           # keep non-negative earnings
+
+wls_2 <- wls_1 %>% 
+  mutate(colgrad = as.integer(edyr64 >= 16), # treatment: college graduate or not
+         eduyears = edyr64) %>%      
+  
+  rename(sex = sexrsp,
+         hs_type = hsdm57,
+         hs_rank = hsrscorq,
+         hs_opinion = hsntrstq,
+         hs_size = hssize,
+         hs_col_prep = colprepq,
+         hs_merit = nameritq,
+         hs_col_exam = cebexamq,
+         parent_op_col = parencq,
+         dad_edu = edfa57q,
+         mom_edu = edmo57q,
+         family_income57 = pi5760,
+         dad_farmer = ocf357)
+
+wls_clean <- wls_2 %>% 
+  # -1 means "don't know", -3 means "refused"
+  mutate(hs_rank = na_if(hs_rank, -3),
+         hs_opinion = na_if(hs_opinion, -3),
+         hs_merit = na_if(hs_merit, -3),
+         hs_col_exam = na_if(hs_col_exam, -3),
+         hs_col_prep = na_if(hs_col_prep, -3),
+         dad_edu = na_if(dad_edu, -3),
+         dad_edu = na_if(dad_edu, -1),
+         mom_edu = na_if(mom_edu, -3),
+         mom_edu = na_if(mom_edu, -1),
+         family_income57 = na_if(family_income57, -3)) %>% 
+  
+  # log_transform earnings
+  mutate(income74 = yrer74i1 * 100,
+         family_income57 = family_income57 * 100,
+         log_income74 = log(income74 + 1),
+         log_family_income57 = log(family_income57 + 1)) %>% 
+  
+  mutate(sex = recode(as.character(sex), 
+                      "1" = "Male", 
+                      "2" = "Female"),
+         hs_type = recode(as.character(hs_type), 
+                          "1" = "Catholic",
+                          "2" = "Private-Other",
+                          "3" = "Public"),
+         hs_opinion = recode(as.character(hs_opinion),
+                             "1" = "Positive",
+                             "2" = "Negative",
+                             "3" = "Indifferent"),
+         hs_merit = recode(as.character(hs_merit),
+                           "1" = "Yes",
+                           "2" = "No"),
+         hs_col_exam = recode(as.character(hs_col_exam),
+                              "1" = "Yes",
+                              "2" = "No"),
+         hs_col_prep = recode(as.character(hs_col_prep),
+                              "1" = "Yes",
+                              "2" = "No"),
+         parent_op_col = recode(as.character(parent_op_col),
+                                "1" = "YesCollege",
+                                "2" = "NoCollege",
+                                "3" = "DontCare",
+                                "4" = "StrongNoCollege",
+                                .default = NA_character_),
+         dad_farmer = recode(as.character(dad_farmer),
+                             "1" = "No",
+                             "2" = "Yes",
+                             "3" = "Yes",
+                             "4" = "Yes",
+                             "5" = "Yes")) %>% 
+  
+  mutate(colgrad = factor(colgrad, levels = c(0, 1), labels = c("No", "Yes")),
+         sex = factor(sex),
+         hs_type = factor(hs_type),
+         hs_opinion = factor(hs_opinion),
+         hs_merit = factor(hs_merit),
+         hs_col_exam = factor(hs_col_exam),
+         hs_col_prep = factor(hs_col_prep),
+         parent_op_col = factor(parent_op_col),
+         dad_farmer = factor(dad_farmer)) %>% 
+  
+  mutate(parent_op_col_simple = case_when(parent_op_col == "YesCollege" ~ "SupportCollege",
+                                   parent_op_col == "NoCollege" ~ "AgainstCollege",
+                                   parent_op_col == "StrongNoCollege" ~ "AgainstCollege",
+                                   parent_op_col == "DontCare" ~ "Neutral",
+                                   TRUE ~ NA_character_),
+         parent_op_col_simple = factor(parent_op_col_simple)) %>%
+  drop_na(everything())
+
+wls_analysis <- wls_clean %>% 
+  dplyr::select(colgrad, sex, 
+         hs_rank, hs_size, hs_type,  
+         dad_edu, mom_edu, dad_farmer, 
+          log_family_income57) %>%
+  drop_na(everything())
+
+# standardized versions of continuous covariates
+#wls_analysis <- wls_analysis %>% 
+#  mutate(hs_rank_z = as.numeric(scale(hs_rank)),
+#         hs_size_z = as.numeric(scale(hs_size)),
+#         dad_edu_z = as.numeric(scale(dad_edu)),
+#         mom_edu_z = as.numeric(scale(mom_edu)),
+#         log_family_income57_z = as.numeric(scale(log_family_income57))) %>% 
+#  dplyr::select(-mom_edu, -dad_edu, -hs_size, -hs_rank,-log_family_income57) %>%
+#  drop_na(everything())
+
+```
+
+```{r}
+#wls_analysis <- wls_analysis %>% mutate(across(where(is.numeric), scale))
+```
+
+```{r}
+set.seed(67)
+grid <- data.frame(alpha = seq(0,1,length=300), lambda = seq(0,.1, length=300))
+inTrain <- createDataPartition(y = wls_analysis$colgrad, p = .8, list = FALSE)
+training <- wls_analysis[inTrain,]
+testing <- wls_analysis[-inTrain,]
+train_control <- trainControl(method = "cv", number = 5, repeats = 4, classProbs=TRUE, summaryFunction = twoClassSummary)
+model_basic <- train(colgrad ~ . , data = training, method = "glmnet", trControl = train_control, preProcess = "scale", metric = "ROC", tuneGrid=grid)
+
+
+
+```
+
+
+```{r} 
+# lambda and alpha parameters chosen from cross validation
+l <- model_basic$bestTune[1,2]
+a <-  model_basic$bestTune[1,1]
+
+#train data
+sc_wls <- training %>% 
+  mutate(across(where(is.numeric), scale)) %>%
+  dummy_cols(remove_most_frequent_dummy = TRUE, remove_selected_columns = TRUE) %>%
+  rename(colgrad = colgrad_Yes)
+X_wls <- sc_wls %>%
+  dplyr::select(-colgrad) %>%
+  as.matrix()
+Y_wls <- sc_wls %>%
+  dplyr::select(colgrad) %>%
+  as.matrix()
+
+#test data
+te_wls <- testing %>% 
+  mutate(across(where(is.numeric), scale))  %>% 
+  dummy_cols(remove_most_frequent_dummy = TRUE, remove_selected_columns = TRUE) %>%
+  rename(colgrad = colgrad_Yes)
+X_te <- te_wls %>%
+  dplyr::select(-colgrad) %>%
+  as.matrix()
+Y_te <- te_wls %>%
+  dplyr::select(colgrad) %>%
+  as.matrix()
+
+#trained model
+fit <- glmnet(x=X_wls, y=Y_wls, family = "binomial", alpha = a, lambda = l)
+
+#test predictions
+c <- predict(fit, X_te, type = 'class') %>%
+  as.numeric()
+
+#Test dataccuracy score
+mean(c == Y_te)
+```
+
+```{r}
+#overall data
+wls <- wls_analysis%>% 
+  mutate(across(where(is.numeric), scale))  %>% 
+  dummy_cols(remove_most_frequent_dummy = TRUE, remove_selected_columns = TRUE) %>%
+  rename(colgrad = colgrad_Yes)
+
+Xwls <- wls %>%
+  dplyr::select(-colgrad) %>%
+  as.matrix()
+Ywls <- wls %>%
+  dplyr::select(colgrad) %>%
+  as.matrix()
+
+#Model
+fit <- glmnet(x=Xwls, y=Ywls, family = "binomial", alpha = a, lambda = l)
+
+#probablities of someone being a college grad.
+probs <- predict(fit, Xwls, type = 'response') 
+
+final_matrix <- cbind(Xwls, Ywls, probs) %>% 
+  as.data.frame() %>%
+  rename(probs = s0) %>%
+  mutate(prop_weights = if_else(colgrad == "Yes", probs, 1-probs)) %>%
+  cbind(income74 = wls_clean$income74)  %>%
+  mutate(colgrad = if_else(colgrad == "Yes", 1, 0))
+
+final_data <- probs %>%
+  as.data.frame() %>%
+  cbind(wls_analysis) %>%
+  rename(probs = s0) %>%
+  mutate(prop_weights = if_else(colgrad == "Yes", probs, 1-probs)) %>%
+  sort_by(probs)%>%
+  cbind(income74 = wls_clean$income74)  %>%
+  mutate(colgrad = if_else(colgrad == "Yes", 1, 0))
+```
+
+
+```{r}
+# ipw estimate before removing one single outlier
+ipw <- mean(((final_data$colgrad * final_data$income74)/(final_data$prop_weights))-(((1-final_data$colgrad) * final_data$income74)/(final_data$prop_weights)))
+
+ipw
+```
+
+```{r}
+# sipw estimate before removing one single outlier
+numer_1 <- sum((final_data$colgrad * final_data$income74)/(final_data$prop_weights))
+denom_1 <- sum(final_data$colgrad/final_data$prop_weights)
+numer_0 <- sum(((1-final_data$colgrad) * final_data$income74)/(final_data$prop_weights))
+denom_0 <- sum((1-final_data$colgrad)/final_data$prop_weights)
+sipw <- (numer_1/denom_1)-(numer_0/denom_0)
+
+sipw
+```
+
+```{r}
+#removing a single outlier in terms of income 
+final_matrix <- cbind(Xwls, Ywls, probs) %>% 
+  as.data.frame() %>%
+  rename(probs = s0) %>%
+  mutate(prop_weights = if_else(colgrad == "Yes", probs, 1-probs)) %>%
+  cbind(income74 = wls_clean$income74) %>%
+  filter(income74 != max(income74))
+
+final_data <- final_data %>%
+  filter(income74 != max(income74))
+
+```
+
+
+```{r}
+# ipw estimate after removing one single outlier
+ipw <- mean(((final_data$colgrad * final_data$income74)/(final_data$prop_weights))-(((1-final_data$colgrad) * final_data$income74)/(final_data$prop_weights)))
+
+ipw
+```
+
+```{r}
+# sipw estimate after removing one single outlier
+numer_1 <- sum((final_data$colgrad * final_data$income74)/(final_data$prop_weights))
+denom_1 <- sum(final_data$colgrad/final_data$prop_weights)
+numer_0 <- sum(((1-final_data$colgrad) * final_data$income74)/(final_data$prop_weights))
+denom_0 <- sum((1-final_data$colgrad)/final_data$prop_weights)
+sipw <- (numer_1/denom_1)-(numer_0/denom_0)
+
+sipw
+```
+
+
+```{r}
+# Checking overlap assumption
+ggplot(final_data, aes(x = probs, fill = colgrad)) +
+  geom_histogram(bins = 50) +
+  facet_grid(colgrad~.)
+```
+  
+```{r}
+#showing income outliers
+ggplot(final_data, aes(x = income74, fill = colgrad)) +
+  geom_boxplot() +
+  facet_grid(colgrad~.)
+
+```

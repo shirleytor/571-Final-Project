@@ -1,0 +1,8 @@
+"0","# ipw estimate before removing one single outlier"
+"0","ipw <- mean(((final_data$colgrad * final_data$income74)/(final_data$prop_weights))-(((1-final_data$colgrad) * final_data$income74)/(final_data$prop_weights)))"
+"0",""
+"0","ipw"
+"1","[1]"
+"1"," -5.619884"
+"1","
+"

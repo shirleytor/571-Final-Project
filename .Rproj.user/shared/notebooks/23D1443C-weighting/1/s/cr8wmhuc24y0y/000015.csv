@@ -1,0 +1,5 @@
+"0","#showing income outliers"
+"0","ggplot(final_data, aes(x = income74, fill = colgrad)) +"
+"0","  geom_boxplot() +"
+"0","  facet_grid(colgrad~.)"
+"0",""
