@@ -5,15 +5,16 @@ format: pdf
 editor: visual
 ---
 
-### **Data Cleaning**
-
-We first restrict the sample to observations with valid treatment and outcome values. We then recode special missing-value codes to proper `NA`s, rescale income variables into meaningful dollar units, and construct interpretable treatment, outcome, and covariate variables. Next, we convert categorical variables into labeled factors, inspect missingness, and define a complete-case analysis sample based on the core variables used in the main causal models. Finally, we create transformed variables such as log income to reduce skewness and improve model stability.
-
 ```{r}
 library(haven)
 library(tidyverse)
 library(forcats)
+library(sandwich)
+library(lmtest)
+library(boot)
 ```
+
+### Data cleaning
 
 ```{r}
 wls <- read_dta("wls_subset.dta")
@@ -138,9 +139,164 @@ wls_analysis <- wls_analysis %>%
          log_family_income57_z = as.numeric(scale(log_family_income57)))
 ```
 
-Baseline model
+### Outcome regression
+
+Baseline model `m0`
 
 ```{r}
-lm(log_income74 ~ colgrad + hs_rank + dad_edu + mom_edu + log_family_income57 + sex,
-   data = wls_analysis)
+m0 <- lm(log_income74 ~ colgrad, data = wls_analysis)
+summary(m0)
+```
+
+```{r}
+m1 <- lm(log_income74 ~ colgrad + hs_rank + dad_edu + mom_edu +
+           log_family_income57 + sex,
+         data = wls_analysis)
+summary(m1)
+```
+
+```{r}
+beta <- coef(m1)["colgradYes"]
+100 * (exp(beta) - 1)
+```
+
+```{r}
+par(mfrow = c(2,2))
+plot(m1)
+```
+
+```{r}
+coeftest(m1, vcov = vcovHC(m1, type = "HC1"))
+```
+
+```{r}
+m2 <- lm(log_income74 ~ colgrad + 
+           hs_rank + I(hs_rank^2) +
+           dad_edu + mom_edu +
+           log_family_income57 + sex,
+         data = wls_analysis)
+
+coeftest(m2, vcov = vcovHC(m2, type = "HC1"))
+```
+
+```{r}
+m3 <- lm(log_income74 ~ colgrad +
+           hs_rank + dad_edu + mom_edu +
+           log_family_income57 + sex +
+           hs_col_exam + hs_col_prep + hs_merit,
+         data = wls_analysis)
+
+coeftest(m3, vcov = vcovHC(m3, type = "HC1"))
+```
+
+```{r}
+wls_analysis %>%
+  group_by(colgrad) %>%
+  summarise(
+    hs_rank = mean(hs_rank, na.rm = TRUE),
+    dad_edu = mean(dad_edu, na.rm = TRUE),
+    mom_edu = mean(mom_edu, na.rm = TRUE),
+    log_income = mean(log_income74, na.rm = TRUE)
+  )
+```
+
+```{r}
+# Predict counterfactuals
+yhat1 <- predict(m1, newdata = transform(wls_analysis, colgrad = "Yes"))
+yhat0 <- predict(m1, newdata = transform(wls_analysis, colgrad = "No"))
+
+# ATE estimate
+mean(yhat1 - yhat0)
+```
+
+```{r}
+# function to compute ATE
+ate_fn <- function(data, indices) {
+  d <- data[indices, ]
+  
+  m <- lm(log_income74 ~ colgrad + hs_rank + dad_edu + mom_edu +
+            log_family_income57 + sex, data = d)
+  
+  y1 <- predict(m, newdata = transform(d, colgrad = "Yes"))
+  y0 <- predict(m, newdata = transform(d, colgrad = "No"))
+  
+  return(mean(y1 - y0))
+}
+
+# bootstrap
+set.seed(123)
+boot_res <- boot(wls_analysis, ate_fn, R = 500)
+
+# standard error
+sd(boot_res$t)
+
+# 95% CI
+quantile(boot_res$t, c(0.025, 0.975))
+```
+
+### **Heterogeneous Treatment Effects**
+
+Effect varies by ability
+
+```{r}
+m_ht <- lm(log_income74 ~ colgrad * hs_rank +
+             dad_edu + mom_edu + log_family_income57 + sex,
+           data = wls_analysis)
+
+coeftest(m_ht, vcov = vcovHC(m_ht, type = "HC1"))
+```
+
+```{r}
+m_ht2 <- lm(log_income74 ~ colgrad * dad_edu + colgrad * mom_edu +
+              hs_rank + log_family_income57 + sex,
+            data = wls_analysis)
+
+coeftest(m_ht2, vcov = vcovHC(m_ht2, type = "HC1"))
+```
+
+```{r}
+# split by high vs low parental education
+median_dad <- median(wls_analysis$dad_edu, na.rm = TRUE)
+
+low <- subset(wls_analysis, dad_edu <= median_dad)
+high <- subset(wls_analysis, dad_edu > median_dad)
+
+lm(log_income74 ~ colgrad + hs_rank + dad_edu + mom_edu +
+     log_family_income57 + sex, data = low)
+
+lm(log_income74 ~ colgrad + hs_rank + dad_edu + mom_edu +
+     log_family_income57 + sex, data = high)
+```
+
+```{r}
+library(modelsummary)
+
+modelsummary(
+  list(
+    "Baseline (m1)" = m1,
+    "Nonlinear (m2)" = m2,
+    "Extended (m3)" = m3
+  ),
+  vcov = list(
+    vcovHC(m1, type = "HC1"),
+    vcovHC(m2, type = "HC1"),
+    vcovHC(m3, type = "HC1")
+  ),
+  stars = TRUE
+)
+```
+
+```{r}
+wls_analysis %>%
+  group_by(sex) %>%
+  summarise(
+    mean_income = mean(income74, na.rm = TRUE),
+    median_income = median(income74, na.rm = TRUE),
+    mean_log_income = mean(log_income74, na.rm = TRUE),
+    pct_zero_income = mean(income74 == 0, na.rm = TRUE)
+  )
+```
+
+```{r}
+table(wls_analysis$sex, wls_analysis$income74 == 0)
 ```
